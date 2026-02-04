@@ -22,15 +22,14 @@ yt_dl_options = {
     'noplaylist': 'True',
     'quiet': True,
     'nocheckcertificate': True,
-    'cookiefile': 'cookies.txt', # Ensure you upload your fresh Netscape file
+    'cookiefile': 'cookies.txt', # This points to the file you uploaded
     'extractor_args': {
         'youtube': {
-            'player_client': ['web_embedded'], # Bypasses DRM and sign-in blocks
+            'player_client': ['web_embedded'], # Bypasses Bot blocks and DRM
         }
     }
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
-
 ffmpeg_options = {
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 
     'options': '-vn'
@@ -69,5 +68,6 @@ async def stop(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Not connected.", ephemeral=True)
 
 bot.run(os.environ["DISCORD_TOKEN"])
+
 
 
