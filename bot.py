@@ -5,10 +5,12 @@ import yt_dlp
 import asyncio
 import datetime
 import os
+import json
 
 # --- CONFIGURATION ---
 ffmpeg_executable = "ffmpeg"
 DEVELOPER_NAME = "Deepanshu Yadav" 
+PLAYLIST_FILE = "playlists.json"  # <--- database file
 
 # --- GLOBAL STATE ---
 guild_settings = {}
@@ -22,16 +24,32 @@ def get_settings(guild_id):
             'autoplay': True,
             'queue': [],
             'now_playing': None,
-            'text_channel': None,  # Saves the channel to send updates to
-            'last_message': None   # Saves the last panel so we can delete it
+            'text_channel': None,
+            'last_message': None
         }
     return guild_settings[guild_id]
+
+# --- DATABASE FUNCTIONS ---
+def load_playlists():
+    if not os.path.exists(PLAYLIST_FILE):
+        return {}
+    try:
+        with open(PLAYLIST_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_playlists(data):
+    with open(PLAYLIST_FILE, 'w') as f:
+        json.dump(data, f, indent=4)
 
 class MusicBot(commands.Bot):
     def __init__(self):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
 
     async def setup_hook(self):
+        # Register the Playlist Group
+        self.tree.add_command(PlaylistCommands(name="playlist", description="Manage your playlists"))
         await self.tree.sync()
         print("✅ Slash commands synced!")
 
@@ -54,16 +72,10 @@ ffmpeg_options = {
 
 # --- UI: THE PRO PANEL ---
 class MusicPanel(discord.ui.View):
-    # Updated __init__ to handle cases where there is no interaction (automatic next song)
     def __init__(self, guild_id):
         super().__init__(timeout=None)
         self.guild_id = guild_id
         self.settings = get_settings(self.guild_id)
-
-    def update_buttons(self):
-        self.loop_btn.style = discord.ButtonStyle.green if self.settings['loop'] else discord.ButtonStyle.secondary
-        self.shuffle_btn.style = discord.ButtonStyle.green if self.settings['shuffle'] else discord.ButtonStyle.secondary
-        self.autoplay_btn.style = discord.ButtonStyle.green if self.settings['autoplay'] else discord.ButtonStyle.secondary
 
     # --- ROW 1 ---
     @discord.ui.button(label="Down", emoji="🔉", style=discord.ButtonStyle.primary, row=0)
@@ -116,13 +128,13 @@ class MusicPanel(discord.ui.View):
     @discord.ui.button(label="Shuffle", emoji="🔀", style=discord.ButtonStyle.secondary, row=2)
     async def shuffle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.settings['shuffle'] = not self.settings['shuffle']
-        self.update_buttons()
+        button.style = discord.ButtonStyle.green if self.settings['shuffle'] else discord.ButtonStyle.secondary
         await interaction.response.edit_message(view=self)
 
     @discord.ui.button(label="Loop", emoji="🔁", style=discord.ButtonStyle.secondary, row=2)
     async def loop_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.settings['loop'] = not self.settings['loop']
-        self.update_buttons()
+        button.style = discord.ButtonStyle.green if self.settings['loop'] else discord.ButtonStyle.secondary
         await interaction.response.edit_message(view=self)
 
     @discord.ui.button(label="Stop", emoji="⏹️", style=discord.ButtonStyle.danger, row=2)
@@ -134,7 +146,6 @@ class MusicPanel(discord.ui.View):
             settings['now_playing'] = None
             await voice.disconnect()
             
-            # Clean up the panel immediately
             if settings['last_message']:
                 try: await settings['last_message'].delete()
                 except: pass
@@ -145,10 +156,10 @@ class MusicPanel(discord.ui.View):
     @discord.ui.button(label="AutoPlay", emoji="🔄", style=discord.ButtonStyle.secondary, row=3)
     async def autoplay_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.settings['autoplay'] = not self.settings['autoplay']
-        self.update_buttons()
+        button.style = discord.ButtonStyle.green if self.settings['autoplay'] else discord.ButtonStyle.secondary
         await interaction.response.edit_message(view=self)
 
-    @discord.ui.button(label="Playlist", emoji="📜", style=discord.ButtonStyle.secondary, row=3)
+    @discord.ui.button(label="Queue", emoji="📜", style=discord.ButtonStyle.secondary, row=3)
     async def playlist(self, interaction: discord.Interaction, button: discord.ui.Button):
         settings = get_settings(interaction.guild.id)
         queue = settings['queue']
@@ -173,35 +184,31 @@ def create_panel_embed(track):
     embed.set_footer(text=f"Dev: {DEVELOPER_NAME} • Enjoy the music! 🎧")
     return embed
 
-# --- THE SMART LOGIC FUNCTION ---
 async def play_next(guild, voice):
     settings = get_settings(guild.id)
     
-    # 1. DELETE THE PREVIOUS MESSAGE (The old panel)
+    # 1. DELETE OLD PANEL
     if settings['last_message']:
-        try:
-            await settings['last_message'].delete()
-        except Exception as e:
-            print(f"Failed to delete message: {e}")
+        try: await settings['last_message'].delete()
+        except: pass
         settings['last_message'] = None
 
-    # 2. DECIDE NEXT SONG
+    # 2. GET NEXT SONG
     track = None
     if settings['loop'] and settings['now_playing']:
         track = settings['now_playing']
     elif settings['queue']:
         track = settings['queue'].pop(0)
     
-    # 3. IF NO SONG -> SEND "QUEUE FINISHED" MESSAGE
+    # 3. IF NO SONG
     if not track:
         settings['now_playing'] = None
         if settings['text_channel']:
-            try:
-                await settings['text_channel'].send("✅ **Queue Finished. Nothing is playing.**", delete_after=10)
+            try: await settings['text_channel'].send("✅ **Queue Finished.**", delete_after=10)
             except: pass
         return
 
-    # 4. IF SONG EXISTS -> PLAY IT & SEND NEW PANEL
+    # 4. PLAY SONG
     settings['now_playing'] = track
     try:
         audio_source = discord.FFmpegPCMAudio(track['url'], **ffmpeg_options)
@@ -209,19 +216,19 @@ async def play_next(guild, voice):
         
         voice.play(transformer, after=lambda e: bot.loop.create_task(play_next(guild, voice)))
         
-        # Send new panel
+        # Send Panel
         if settings['text_channel']:
             embed = create_panel_embed(track)
-            view = MusicPanel(guild.id) # Pass guild_id directly
+            view = MusicPanel(guild.id)
             msg = await settings['text_channel'].send(embed=embed, view=view)
-            settings['last_message'] = msg  # Save it so we can delete it later
+            settings['last_message'] = msg
             
     except Exception as e:
         print(f"Error playing: {e}")
 
 # --- COMMANDS ---
 
-@bot.tree.command(name="play", description="Play a song with Pro Panel")
+@bot.tree.command(name="play", description="Play a song")
 async def play(interaction: discord.Interaction, search: str):
     if not interaction.user.voice:
         return await interaction.response.send_message("❌ Join VC first!", ephemeral=True)
@@ -247,7 +254,7 @@ async def play(interaction: discord.Interaction, search: str):
         }
         
         settings = get_settings(interaction.guild.id)
-        settings['text_channel'] = interaction.channel  # Save channel for auto-updates
+        settings['text_channel'] = interaction.channel
         voice = interaction.guild.voice_client
         
         if voice.is_playing():
@@ -260,7 +267,6 @@ async def play(interaction: discord.Interaction, search: str):
             
             voice.play(transformer, after=lambda e: bot.loop.create_task(play_next(interaction.guild, voice)))
             
-            # Send the First Panel
             embed = create_panel_embed(track)
             view = MusicPanel(interaction.guild.id)
             msg = await interaction.channel.send(embed=embed, view=view)
@@ -269,22 +275,145 @@ async def play(interaction: discord.Interaction, search: str):
     except Exception as e:
         await interaction.channel.send(f"❌ Error: {e}", delete_after=10)
 
-@bot.tree.command(name="stop", description="Stop music, clear queue, and disconnect")
-async def stop_cmd(interaction: discord.Interaction):
-    if interaction.guild.voice_client:
+@bot.tree.command(name="skip", description="Skip current song")
+async def skip(interaction: discord.Interaction):
+    voice = interaction.guild.voice_client
+    if voice and voice.is_playing():
+        voice.stop()
+        await interaction.response.send_message("⏭️ **Skipped!**", delete_after=2)
+    else:
+        await interaction.response.send_message("❌ Nothing to skip.", ephemeral=True)
+
+@bot.tree.command(name="stop", description="Stop and disconnect")
+async def stop(interaction: discord.Interaction):
+    voice = interaction.guild.voice_client
+    if voice:
         settings = get_settings(interaction.guild.id)
         settings['queue'].clear()
         settings['now_playing'] = None
         
-        await interaction.guild.voice_client.disconnect()
+        await voice.disconnect()
         
-        # Cleanup panel
         if settings['last_message']:
             try: await settings['last_message'].delete()
             except: pass
             
-        await interaction.response.send_message("🛑 **Music Stopped.**", delete_after=5)
+        await interaction.response.send_message("🛑 **Stopped.**", delete_after=5)
     else:
-        await interaction.response.send_message("❌ I am not in a voice channel.", ephemeral=True)
+        await interaction.response.send_message("❌ Not connected.", ephemeral=True)
+
+@bot.tree.command(name="playlists", description="Show all playlists")
+async def playlists(interaction: discord.Interaction):
+    data = load_playlists()
+    user_key_start = f"{interaction.user.id}_"
+    
+    my_playlists = []
+    for key in data:
+        if key.startswith(user_key_start):
+            name = key.replace(user_key_start, "")
+            count = len(data[key])
+            my_playlists.append(f"• **{name}** ({count} songs)")
+            
+    if not my_playlists:
+        await interaction.response.send_message("📂 You have no playlists.", ephemeral=True)
+    else:
+        desc = "\n".join(my_playlists)
+        embed = discord.Embed(title="📂 Your Playlists", description=desc, color=0x2b2d31)
+        await interaction.response.send_message(embed=embed, ephemeral=True)
+
+# --- PLAYLIST GROUP COMMANDS ---
+class PlaylistCommands(app_commands.Group):
+    
+    @app_commands.command(name="create", description="Create a new playlist")
+    async def create(self, interaction: discord.Interaction, name: str):
+        data = load_playlists()
+        key = f"{interaction.user.id}_{name}"
+        
+        if key in data:
+            return await interaction.response.send_message(f"❌ Playlist **{name}** already exists!", ephemeral=True)
+            
+        data[key] = []
+        save_playlists(data)
+        await interaction.response.send_message(f"✅ Created playlist **{name}**!", ephemeral=True)
+
+    @app_commands.command(name="delete", description="Delete a playlist")
+    async def delete(self, interaction: discord.Interaction, name: str):
+        data = load_playlists()
+        key = f"{interaction.user.id}_{name}"
+        
+        if key not in data:
+            return await interaction.response.send_message(f"❌ Playlist **{name}** not found!", ephemeral=True)
+            
+        del data[key]
+        save_playlists(data)
+        await interaction.response.send_message(f"🗑️ Deleted **{name}**.", ephemeral=True)
+
+    @app_commands.command(name="add", description="Add a song to a playlist")
+    async def add(self, interaction: discord.Interaction, playlist: str, song: str):
+        data = load_playlists()
+        key = f"{interaction.user.id}_{playlist}"
+        
+        if key not in data:
+            return await interaction.response.send_message(f"❌ Playlist **{playlist}** doesn't exist. Create it first!", ephemeral=True)
+
+        await interaction.response.send_message(f"🔍 Searching: `{song}`...", ephemeral=True)
+        
+        try:
+            loop = asyncio.get_event_loop()
+            info = await loop.run_in_executor(None, lambda: ytdl.extract_info(f"ytsearch:{song}", download=False))
+            if 'entries' in info: info = info['entries'][0]
+            
+            duration_str = str(datetime.timedelta(seconds=int(info.get('duration', 0))))
+            track_data = {
+                'url': info['url'],
+                'title': info['title'],
+                'duration': duration_str,
+                'uploader': info.get('uploader', 'Unknown'),
+                'thumbnail': info.get('thumbnail', ''),
+                'requester': interaction.user.mention
+            }
+            
+            data[key].append(track_data)
+            save_playlists(data)
+            
+            await interaction.edit_original_response(content=f"✅ Added **{info['title']}** to **{playlist}**!")
+            
+        except Exception as e:
+            await interaction.edit_original_response(content=f"❌ Error finding song: {e}")
+
+    @app_commands.command(name="play", description="Load and play a playlist")
+    async def play_playlist(self, interaction: discord.Interaction, playlist: str):
+        if not interaction.user.voice:
+            return await interaction.response.send_message("❌ Join VC first!", ephemeral=True)
+            
+        data = load_playlists()
+        key = f"{interaction.user.id}_{playlist}"
+        
+        if key not in data or not data[key]:
+            return await interaction.response.send_message(f"❌ Playlist **{playlist}** is empty or missing.", ephemeral=True)
+
+        await interaction.response.send_message(f"📂 Loading **{playlist}**...", delete_after=5)
+
+        if not interaction.guild.voice_client:
+            await interaction.user.voice.channel.connect()
+
+        settings = get_settings(interaction.guild.id)
+        settings['text_channel'] = interaction.channel
+        
+        # Add all songs to queue
+        count = 0
+        for track in data[key]:
+            # We clone the track object so modifying it doesn't break the saved file
+            # Update requester to current user
+            new_track = track.copy()
+            new_track['requester'] = interaction.user.mention
+            settings['queue'].append(new_track)
+            count += 1
+            
+        await interaction.channel.send(f"✅ Loaded **{count}** songs from **{playlist}**!", delete_after=5)
+
+        # Start playing if not already
+        if not interaction.guild.voice_client.is_playing():
+            await play_next(interaction.guild, interaction.guild.voice_client)
 
 bot.run(os.environ["DISCORD_TOKEN"])
