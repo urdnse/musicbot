@@ -54,7 +54,7 @@ class MusicBot(commands.Bot):
 
 bot = MusicBot()
 
-# --- AUDIO SETUP (TV MODE FIX) ---
+# --- AUDIO SETUP (THE EMBEDDED PLAYER FIX) ---
 yt_dl_options = {
     'format': 'bestaudio/best',
     'noplaylist': 'True',
@@ -62,12 +62,13 @@ yt_dl_options = {
     'default_search': 'auto',
     'nocheckcertificate': True,
     'source_address': '0.0.0.0',
-    'cachedir': False, # Disable cache to prevent saving failed attempts
+    'cachedir': False,
     
-    # --- TRICK YOUTUBE INTO THINKING WE ARE A SMART TV ---
+    # --- TRICK YOUTUBE INTO THINKING WE ARE AN EMBEDDED PLAYER ---
+    # This bypasses the "Block" AND avoids the "DRM" issue.
     'extractor_args': {
         'youtube': {
-            'player_client': ['tv']  # <--- THIS IS THE MAGIC KEY
+            'player_client': ['web_embedded'] 
         }
     }
 }
