@@ -7,18 +7,17 @@ import datetime
 import os
 import json
 
+# --- DEBUGGING: CHECK FOR COOKIES ---
+if os.path.exists("cookies.txt"):
+    print("\n\n✅✅✅ SUCCCESS: 'cookies.txt' FOUND! Loading it now... ✅✅✅\n\n")
+else:
+    print("\n\n❌❌❌ ERROR: 'cookies.txt' IS MISSING! YouTube will BLOCK you! ❌❌❌\n\n")
+
 # --- CONFIGURATION ---
 ffmpeg_executable = "ffmpeg"
 DEVELOPER_NAME = "Deepanshu Yadav" 
 PLAYLIST_FILE = "playlists.json"
 COOKIE_FILE = "cookies.txt"
-
-# --- DEBUG CHECK ---
-if os.path.exists(COOKIE_FILE):
-    print(f"✅ SUCCESS: Found {COOKIE_FILE}! (Bypassing YouTube Block)")
-else:
-    print(f"⚠️ WARNING: {COOKIE_FILE} NOT FOUND. YouTube will likely BLOCK this bot.")
-    print("👉 Please upload 'cookies.txt' to your GitHub repository.")
 
 # --- GLOBAL STATE ---
 guild_settings = {}
@@ -62,17 +61,21 @@ class MusicBot(commands.Bot):
 
 bot = MusicBot()
 
-# --- AUDIO SETUP ---
+# --- AUDIO SETUP (THE FIX IS HERE) ---
 yt_dl_options = {
     'format': 'bestaudio/best',
     'noplaylist': 'True',
     'quiet': True,
     'default_search': 'auto',
     'nocheckcertificate': True,
-    # 1. Force use of cookies
     'cookiefile': COOKIE_FILE, 
-    # 2. Fake User Agent (Looks like a real PC)
-    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
+    'source_address': '0.0.0.0', # Force IPv4
+    # TRICK YOUTUBE INTO THINKING WE ARE AN ANDROID PHONE
+    'extractor_args': {
+        'youtube': {
+            'player_client': ['android', 'web']
+        }
+    }
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
