@@ -22,10 +22,10 @@ yt_dl_options = {
     'noplaylist': 'True',
     'quiet': True,
     'nocheckcertificate': True,
-    'cookiefile': 'cookies.txt', # Ensure you upload your fresh file!
+    'cookiefile': 'cookies.txt', # Ensure you upload your fresh Netscape file
     'extractor_args': {
         'youtube': {
-            'player_client': ['web_embedded'], # Bypasses DRM and sign-in
+            'player_client': ['web_embedded'], # Bypasses DRM and sign-in blocks
         }
     }
 }
@@ -69,4 +69,5 @@ async def stop(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Not connected.", ephemeral=True)
 
 bot.run(os.environ["DISCORD_TOKEN"])
+
 
