@@ -8,11 +8,60 @@ import time
 import json
 import os
 import sys
+import urllib.request
+import tarfile
+import shutil
+import stat
+
+# --- AUTO-INSTALLER (RUNS ON STARTUP) ---
+def install_ffmpeg_if_missing():
+    # Check if ffmpeg is already here
+    if os.path.exists("./ffmpeg"):
+        return "./ffmpeg"
+    
+    print("🛠️ FFmpeg missing. Installing automatically...")
+    
+    # Download the "Golden" v5.1.1 version (Safe for all servers)
+    url = "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz"
+    
+    try:
+        # 1. Download
+        print("⬇️ Downloading...")
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        with urllib.request.urlopen(req) as response, open("ffmpeg.tar.xz", 'wb') as out:
+            shutil.copyfileobj(response, out)
+            
+        # 2. Extract
+        print("📦 Extracting...")
+        with tarfile.open("ffmpeg.tar.xz") as f:
+            f.extractall()
+            
+        # 3. Move
+        print("📂 Moving...")
+        for root, dirs, files in os.walk("."):
+            if "ffmpeg" in files:
+                path = os.path.join(root, "ffmpeg")
+                if path == "./ffmpeg": continue
+                shutil.move(path, "./ffmpeg")
+                break
+        
+        # 4. Cleanup & Permissions
+        if os.path.exists("ffmpeg.tar.xz"): os.remove("ffmpeg.tar.xz")
+        st = os.stat("./ffmpeg")
+        os.chmod("./ffmpeg", st.st_mode | stat.S_IEXEC)
+        print("✅ FFmpeg Installed Successfully!")
+        return "./ffmpeg"
+        
+    except Exception as e:
+        print(f"❌ Install Error: {e}")
+        return "ffmpeg" # Fallback to system default
+
+# Run the installer BEFORE the bot starts
+ffmpeg_path = install_ffmpeg_if_missing()
 
 # --- CONFIGURATION ---
 PLAYLIST_FILE = "playlists.json"
 
-# --- PLAYLIST LINKS ---
 VIRAL_PLAYLISTS = [
     "https://www.youtube.com/playlist?list=PL15B1E77BB5708555",      
     "https://www.youtube.com/playlist?list=PL9bw4S5ePsEEqCMJSiYZ-KTtEjzVy0YvK"
@@ -37,9 +86,8 @@ class MusicBot(commands.Bot):
 bot = MusicBot()
 queues = {}
 
-# --- AUDIO SETUP FOR RAILWAY ---
-# Railway installs ffmpeg globally, so we just call it by name.
-ffmpeg_executable = "ffmpeg"
+# --- AUDIO SETUP ---
+print(f"🎵 Bot configured to use FFmpeg at: {ffmpeg_path}")
 
 yt_dl_options = {
     'format': 'bestaudio/best',
@@ -50,8 +98,8 @@ yt_dl_options = {
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
 ffmpeg_options = {
-    'executable': ffmpeg_executable,
-    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 
+    'executable': ffmpeg_path,
+    'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5 -threads 1', 
     'options': '-vn'
 }
 
@@ -207,7 +255,4 @@ class PlaylistGroup(app_commands.Group):
         await interaction.response.send_message(f"✅ Loaded **{name}**")
         if interaction.guild.voice_client and not interaction.guild.voice_client.is_playing(): await play_next_song(interaction)
 
-# Retrieve token from environment variables for security
-
 bot.run(os.environ["DISCORD_TOKEN"])
-
