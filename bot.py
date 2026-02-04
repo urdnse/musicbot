@@ -8,6 +8,7 @@ import os
 
 # --- CONFIGURATION ---
 ffmpeg_executable = "ffmpeg"
+DEVELOPER_NAME = "Deepanshu Yadav"  # <--- CHANGE YOUR NAME HERE
 
 # --- GLOBAL STATE ---
 guild_settings = {}
@@ -62,14 +63,13 @@ class MusicPanel(discord.ui.View):
         self.shuffle_btn.style = discord.ButtonStyle.green if self.settings['shuffle'] else discord.ButtonStyle.secondary
         self.autoplay_btn.style = discord.ButtonStyle.green if self.settings['autoplay'] else discord.ButtonStyle.secondary
 
-    # --- ROW 1: Volume Down, Back, Pause ---
+    # --- ROW 1 ---
     @discord.ui.button(label="Down", emoji="🔉", style=discord.ButtonStyle.primary, row=0)
     async def vol_down(self, interaction: discord.Interaction, button: discord.ui.Button):
         voice = interaction.guild.voice_client
         if voice and voice.source:
             self.settings['volume'] = max(0.0, self.settings['volume'] - 0.1)
             voice.source.volume = self.settings['volume']
-            # FIX: Removes 'ephemeral=True' and adds 'delete_after=2'
             await interaction.response.send_message(f"🔉 Volume: {int(self.settings['volume']*100)}%", delete_after=2)
         else: await interaction.response.defer()
 
@@ -93,7 +93,7 @@ class MusicPanel(discord.ui.View):
             button.label = "Pause"
         await interaction.response.edit_message(view=self)
 
-    # --- ROW 2: Skip, Volume Up ---
+    # --- ROW 2 ---
     @discord.ui.button(label="Skip", emoji="⏭️", style=discord.ButtonStyle.primary, row=1)
     async def skip(self, interaction: discord.Interaction, button: discord.ui.Button):
         voice = interaction.guild.voice_client
@@ -107,11 +107,10 @@ class MusicPanel(discord.ui.View):
         if voice and voice.source:
             self.settings['volume'] = min(2.0, self.settings['volume'] + 0.1)
             voice.source.volume = self.settings['volume']
-            # FIX: Removes 'ephemeral=True' and adds 'delete_after=2'
             await interaction.response.send_message(f"🔊 Volume: {int(self.settings['volume']*100)}%", delete_after=2)
         else: await interaction.response.defer()
 
-    # --- ROW 3: Shuffle, Loop, Stop ---
+    # --- ROW 3 ---
     @discord.ui.button(label="Shuffle", emoji="🔀", style=discord.ButtonStyle.secondary, row=2)
     async def shuffle_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.settings['shuffle'] = not self.settings['shuffle']
@@ -130,10 +129,11 @@ class MusicPanel(discord.ui.View):
         if voice:
             settings = get_settings(interaction.guild.id)
             settings['queue'].clear()
+            settings['now_playing'] = None
             await voice.disconnect()
-            await interaction.response.send_message("⏹️ Stopped.", delete_after=5)
+            await interaction.response.send_message("⏹️ Stopped by button.", delete_after=5)
 
-    # --- ROW 4: AutoPlay, Playlist ---
+    # --- ROW 4 ---
     @discord.ui.button(label="AutoPlay", emoji="🔄", style=discord.ButtonStyle.secondary, row=3)
     async def autoplay_btn(self, interaction: discord.Interaction, button: discord.ui.Button):
         self.settings['autoplay'] = not self.settings['autoplay']
@@ -158,11 +158,19 @@ class MusicPanel(discord.ui.View):
 # --- HELPER: Create the "Panel" Embed ---
 def create_panel_embed(track):
     embed = discord.Embed(description=f"💿 **{track['title']}**", color=0x2b2d31)
+    
     embed.set_author(name="MUSIC PANEL", icon_url=track['thumbnail'])
+    
+    # 3-Column Layout
     embed.add_field(name="🙋 Requested By", value=track['requester'], inline=True)
     embed.add_field(name="⏳ Duration", value=track['duration'], inline=True)
     embed.add_field(name="🎵 Author", value=track['uploader'], inline=True)
+    
     embed.set_thumbnail(url=track['thumbnail'])
+    
+    # --- ADDED DEVELOPER NAME HERE ---
+    embed.set_footer(text=f"Dev: {DEVELOPER_NAME} • Enjoy the music! 🎧")
+    
     return embed
 
 async def play_next(guild, voice):
@@ -185,6 +193,8 @@ async def play_next(guild, voice):
         voice.play(transformer, after=lambda e: bot.loop.create_task(play_next(guild, voice)))
     except Exception as e:
         print(f"Error playing: {e}")
+
+# --- COMMANDS ---
 
 @bot.tree.command(name="play", description="Play a song with Pro Panel")
 async def play(interaction: discord.Interaction, search: str):
@@ -227,10 +237,23 @@ async def play(interaction: discord.Interaction, search: str):
             embed = create_panel_embed(track)
             view = MusicPanel(interaction)
             
-            # Send the new panel
+            # Send the Panel
             await interaction.channel.send(embed=embed, view=view)
 
     except Exception as e:
         await interaction.channel.send(f"❌ Error: {e}", delete_after=10)
+
+# --- NEW STOP COMMAND ---
+@bot.tree.command(name="stop", description="Stop music, clear queue, and disconnect")
+async def stop_cmd(interaction: discord.Interaction):
+    if interaction.guild.voice_client:
+        settings = get_settings(interaction.guild.id)
+        settings['queue'].clear()
+        settings['now_playing'] = None
+        
+        await interaction.guild.voice_client.disconnect()
+        await interaction.response.send_message("🛑 **Music Stopped & Queue Cleared.**", delete_after=5)
+    else:
+        await interaction.response.send_message("❌ I am not in a voice channel.", ephemeral=True)
 
 bot.run(os.environ["DISCORD_TOKEN"])
