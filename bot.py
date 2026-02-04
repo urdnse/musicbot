@@ -208,4 +208,5 @@ class PlaylistGroup(app_commands.Group):
         if interaction.guild.voice_client and not interaction.guild.voice_client.is_playing(): await play_next_song(interaction)
 
 # Retrieve token from environment variables for security
-bot.run(os.environ[MTQ2ODQ1NTk1NDAzNDA2NTQ5MQ.G3V5Pq.nsvZO4z-BVw0liWyvg2ZyVI2JZwx_yXhO_E-BE])
+
+bot.run(os.environ["MTQ2ODQ1NTk1NDAzNDA2NTQ5MQ.Gs-eGX.adSL72lp8bUkbT4rDrf8qrXpABYJ0BhyhRisXI"])
