@@ -209,4 +209,5 @@ class PlaylistGroup(app_commands.Group):
 
 # Retrieve token from environment variables for security
 
-bot.run(os.environ["MTQ2ODQ1NTk1NDAzNDA2NTQ5MQ.Gs-eGX.adSL72lp8bUkbT4rDrf8qrXpABYJ0BhyhRisXI"])
+bot.run(os.environ["DISCORD_TOKEN"])
+
