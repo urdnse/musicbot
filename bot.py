@@ -8,25 +8,19 @@ import time
 import json
 import os
 import sys
-
-# --- THE MAGIC FIX: Import the library that has FFmpeg inside ---
+# --- IMPORT THE FFMPEG LIBRARY ---
 import imageio_ffmpeg
-
-# Get the exact path to the binary
-ffmpeg_executable = imageio_ffmpeg.get_ffmpeg_exe()
-print(f"✅ FOUND FFmpeg at: {ffmpeg_executable}")
 
 # --- CONFIGURATION ---
 PLAYLIST_FILE = "playlists.json"
-
 VIRAL_PLAYLISTS = [
     "https://www.youtube.com/playlist?list=PL15B1E77BB5708555",      
     "https://www.youtube.com/playlist?list=PL9bw4S5ePsEEqCMJSiYZ-KTtEjzVy0YvK"
 ]
 
-def to_cool_font(text):
-    mapping = {'A': '𝐀', 'B': '𝐁', 'C': '𝐂', 'D': '𝐃', 'a': '𝐚', 'b': '𝐛', 'c': '𝐜', 'd': '𝐝'} 
-    return "".join(mapping.get(char, char) for char in text)
+# --- GET FFMPEG PATH AUTOMATICALLY ---
+ffmpeg_executable = imageio_ffmpeg.get_ffmpeg_exe()
+print(f"✅ FOUND FFmpeg at: {ffmpeg_executable}")
 
 class MusicBot(commands.Bot):
     def __init__(self):
@@ -48,7 +42,6 @@ yt_dl_options = {
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
-# Use the 'executable' we found earlier
 ffmpeg_options = {
     'executable': ffmpeg_executable,
     'before_options': '-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5', 
@@ -126,8 +119,15 @@ async def play_next_song(interaction):
 
         track['start_time'] = time.time()
         voice = interaction.guild.voice_client
-        voice.play(track['source'], after=lambda e: bot.loop.create_task(play_next_song(interaction)))
         
+        # Define callback
+        def after_playing(error):
+            if error: print(f"Player error: {error}")
+            bot.loop.create_task(play_next_song(interaction))
+
+        voice.play(track['source'], after=after_playing)
+        
+        # Send Player Embed
         try:
             msg = await interaction.channel.send(embed=create_progress_embed(interaction, track), view=MusicControls(interaction))
             bot.loop.create_task(update_message_loop(interaction, msg, track))
@@ -136,26 +136,44 @@ async def play_next_song(interaction):
 @bot.tree.command(name="play", description="Play a song")
 async def play(interaction: discord.Interaction, search: str):
     if not interaction.user.voice: return await interaction.response.send_message("❌ Join VC first!", ephemeral=True)
+    
+    # 1. Send initial message
     await interaction.response.send_message(f"🔍 **Searching for** `{search}`...")
+    
     if not interaction.guild.voice_client: await interaction.user.voice.channel.connect()
 
     try:
         loop = asyncio.get_event_loop()
         data = await loop.run_in_executor(None, lambda: ytdl.extract_info(f"ytsearch:{search}", download=False))
         if 'entries' in data: data = data['entries'][0]
-        track = {'url': data['webpage_url'], 'title': data['title'], 'thumbnail': data.get('thumbnail', ''), 'duration_sec': data.get('duration', 0), 'requester': interaction.user.mention, 'source': discord.FFmpegPCMAudio(data['url'], **ffmpeg_options)}
+        
+        track = {
+            'url': data['webpage_url'],
+            'title': data['title'],
+            'thumbnail': data.get('thumbnail', ''),
+            'duration_sec': data.get('duration', 0),
+            'requester': interaction.user.mention,
+            'source': discord.FFmpegPCMAudio(data['url'], **ffmpeg_options)
+        }
         
         if interaction.guild.voice_client.is_playing():
             if interaction.guild.id not in queues: queues[interaction.guild.id] = []
             queues[interaction.guild.id].append(track)
             await interaction.edit_original_response(content=f"✅ Added to Queue: **{track['title']}**")
         else:
-            await interaction.delete_original_response()
+            # 2. EDIT the message instead of deleting it
+            await interaction.edit_original_response(content=f"💿 **Loading:** {track['title']}...")
+            
             track['start_time'] = time.time()
             interaction.guild.voice_client.play(track['source'], after=lambda e: bot.loop.create_task(play_next_song(interaction)))
+            
+            # 3. Send the player controls
             msg = await interaction.channel.send(embed=create_progress_embed(interaction, track), view=MusicControls(interaction))
             bot.loop.create_task(update_message_loop(interaction, msg, track))
-    except Exception as e: await interaction.edit_original_response(content=f"Error: {e}")
+            
+    except Exception as e: 
+        # If it crashes, it will now SHOW the error instead of vanishing
+        await interaction.edit_original_response(content=f"❌ **Error:** {e}")
 
 @bot.tree.command(name="viral", description="Play Viral Hits")
 async def viral(interaction: discord.Interaction):
