@@ -8,7 +8,7 @@ import os
 
 # --- CONFIGURATION ---
 ffmpeg_executable = "ffmpeg"
-DEVELOPER_NAME = "Deepanshu Yadav"  # <--- CHANGE YOUR NAME HERE
+DEVELOPER_NAME = "Deepanshu Yadav" 
 
 # --- GLOBAL STATE ---
 guild_settings = {}
@@ -21,7 +21,9 @@ def get_settings(guild_id):
             'shuffle': False,
             'autoplay': True,
             'queue': [],
-            'now_playing': None
+            'now_playing': None,
+            'text_channel': None,  # Saves the channel to send updates to
+            'last_message': None   # Saves the last panel so we can delete it
         }
     return guild_settings[guild_id]
 
@@ -52,10 +54,10 @@ ffmpeg_options = {
 
 # --- UI: THE PRO PANEL ---
 class MusicPanel(discord.ui.View):
-    def __init__(self, interaction):
+    # Updated __init__ to handle cases where there is no interaction (automatic next song)
+    def __init__(self, guild_id):
         super().__init__(timeout=None)
-        self.interaction = interaction
-        self.guild_id = interaction.guild.id
+        self.guild_id = guild_id
         self.settings = get_settings(self.guild_id)
 
     def update_buttons(self):
@@ -131,7 +133,13 @@ class MusicPanel(discord.ui.View):
             settings['queue'].clear()
             settings['now_playing'] = None
             await voice.disconnect()
-            await interaction.response.send_message("⏹️ Stopped by button.", delete_after=5)
+            
+            # Clean up the panel immediately
+            if settings['last_message']:
+                try: await settings['last_message'].delete()
+                except: pass
+                
+            await interaction.response.send_message("⏹️ Stopped.", delete_after=5)
 
     # --- ROW 4 ---
     @discord.ui.button(label="AutoPlay", emoji="🔄", style=discord.ButtonStyle.secondary, row=3)
@@ -155,42 +163,59 @@ class MusicPanel(discord.ui.View):
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
 
-# --- HELPER: Create the "Panel" Embed ---
 def create_panel_embed(track):
     embed = discord.Embed(description=f"💿 **{track['title']}**", color=0x2b2d31)
-    
     embed.set_author(name="MUSIC PANEL", icon_url=track['thumbnail'])
-    
-    # 3-Column Layout
     embed.add_field(name="🙋 Requested By", value=track['requester'], inline=True)
     embed.add_field(name="⏳ Duration", value=track['duration'], inline=True)
     embed.add_field(name="🎵 Author", value=track['uploader'], inline=True)
-    
     embed.set_thumbnail(url=track['thumbnail'])
-    
-    # --- ADDED DEVELOPER NAME HERE ---
     embed.set_footer(text=f"Dev: {DEVELOPER_NAME} • Enjoy the music! 🎧")
-    
     return embed
 
+# --- THE SMART LOGIC FUNCTION ---
 async def play_next(guild, voice):
     settings = get_settings(guild.id)
     
+    # 1. DELETE THE PREVIOUS MESSAGE (The old panel)
+    if settings['last_message']:
+        try:
+            await settings['last_message'].delete()
+        except Exception as e:
+            print(f"Failed to delete message: {e}")
+        settings['last_message'] = None
+
+    # 2. DECIDE NEXT SONG
+    track = None
     if settings['loop'] and settings['now_playing']:
         track = settings['now_playing']
     elif settings['queue']:
         track = settings['queue'].pop(0)
-    else:
+    
+    # 3. IF NO SONG -> SEND "QUEUE FINISHED" MESSAGE
+    if not track:
         settings['now_playing'] = None
+        if settings['text_channel']:
+            try:
+                await settings['text_channel'].send("✅ **Queue Finished. Nothing is playing.**", delete_after=10)
+            except: pass
         return
 
+    # 4. IF SONG EXISTS -> PLAY IT & SEND NEW PANEL
     settings['now_playing'] = track
-    
     try:
         audio_source = discord.FFmpegPCMAudio(track['url'], **ffmpeg_options)
         transformer = discord.PCMVolumeTransformer(audio_source, volume=settings['volume'])
         
         voice.play(transformer, after=lambda e: bot.loop.create_task(play_next(guild, voice)))
+        
+        # Send new panel
+        if settings['text_channel']:
+            embed = create_panel_embed(track)
+            view = MusicPanel(guild.id) # Pass guild_id directly
+            msg = await settings['text_channel'].send(embed=embed, view=view)
+            settings['last_message'] = msg  # Save it so we can delete it later
+            
     except Exception as e:
         print(f"Error playing: {e}")
 
@@ -222,6 +247,7 @@ async def play(interaction: discord.Interaction, search: str):
         }
         
         settings = get_settings(interaction.guild.id)
+        settings['text_channel'] = interaction.channel  # Save channel for auto-updates
         voice = interaction.guild.voice_client
         
         if voice.is_playing():
@@ -234,16 +260,15 @@ async def play(interaction: discord.Interaction, search: str):
             
             voice.play(transformer, after=lambda e: bot.loop.create_task(play_next(interaction.guild, voice)))
             
+            # Send the First Panel
             embed = create_panel_embed(track)
-            view = MusicPanel(interaction)
-            
-            # Send the Panel
-            await interaction.channel.send(embed=embed, view=view)
+            view = MusicPanel(interaction.guild.id)
+            msg = await interaction.channel.send(embed=embed, view=view)
+            settings['last_message'] = msg
 
     except Exception as e:
         await interaction.channel.send(f"❌ Error: {e}", delete_after=10)
 
-# --- NEW STOP COMMAND ---
 @bot.tree.command(name="stop", description="Stop music, clear queue, and disconnect")
 async def stop_cmd(interaction: discord.Interaction):
     if interaction.guild.voice_client:
@@ -252,7 +277,13 @@ async def stop_cmd(interaction: discord.Interaction):
         settings['now_playing'] = None
         
         await interaction.guild.voice_client.disconnect()
-        await interaction.response.send_message("🛑 **Music Stopped & Queue Cleared.**", delete_after=5)
+        
+        # Cleanup panel
+        if settings['last_message']:
+            try: await settings['last_message'].delete()
+            except: pass
+            
+        await interaction.response.send_message("🛑 **Music Stopped.**", delete_after=5)
     else:
         await interaction.response.send_message("❌ I am not in a voice channel.", ephemeral=True)
 
