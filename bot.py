@@ -10,7 +10,8 @@ import json
 # --- CONFIGURATION ---
 ffmpeg_executable = "ffmpeg"
 DEVELOPER_NAME = "Deepanshu Yadav" 
-PLAYLIST_FILE = "playlists.json"  # <--- database file
+PLAYLIST_FILE = "playlists.json"
+COOKIE_FILE = "cookies.txt"  # <--- NEW: The key to bypass the block
 
 # --- GLOBAL STATE ---
 guild_settings = {}
@@ -48,7 +49,6 @@ class MusicBot(commands.Bot):
         super().__init__(command_prefix="!", intents=discord.Intents.all())
 
     async def setup_hook(self):
-        # Register the Playlist Group
         self.tree.add_command(PlaylistCommands(name="playlist", description="Manage your playlists"))
         await self.tree.sync()
         print("✅ Slash commands synced!")
@@ -60,7 +60,10 @@ yt_dl_options = {
     'format': 'bestaudio/best',
     'noplaylist': 'True',
     'quiet': True,
-    'default_search': 'auto'
+    'default_search': 'auto',
+    'nocheckcertificate': True,
+    # THIS IS THE FIX: Tell yt-dlp to use the cookies file
+    'cookiefile': COOKIE_FILE if os.path.exists(COOKIE_FILE) else None
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
@@ -187,20 +190,17 @@ def create_panel_embed(track):
 async def play_next(guild, voice):
     settings = get_settings(guild.id)
     
-    # 1. DELETE OLD PANEL
     if settings['last_message']:
         try: await settings['last_message'].delete()
         except: pass
         settings['last_message'] = None
 
-    # 2. GET NEXT SONG
     track = None
     if settings['loop'] and settings['now_playing']:
         track = settings['now_playing']
     elif settings['queue']:
         track = settings['queue'].pop(0)
     
-    # 3. IF NO SONG
     if not track:
         settings['now_playing'] = None
         if settings['text_channel']:
@@ -208,7 +208,6 @@ async def play_next(guild, voice):
             except: pass
         return
 
-    # 4. PLAY SONG
     settings['now_playing'] = track
     try:
         audio_source = discord.FFmpegPCMAudio(track['url'], **ffmpeg_options)
@@ -216,7 +215,6 @@ async def play_next(guild, voice):
         
         voice.play(transformer, after=lambda e: bot.loop.create_task(play_next(guild, voice)))
         
-        # Send Panel
         if settings['text_channel']:
             embed = create_panel_embed(track)
             view = MusicPanel(guild.id)
@@ -321,7 +319,6 @@ async def playlists(interaction: discord.Interaction):
         embed = discord.Embed(title="📂 Your Playlists", description=desc, color=0x2b2d31)
         await interaction.response.send_message(embed=embed, ephemeral=True)
 
-# --- PLAYLIST GROUP COMMANDS ---
 class PlaylistCommands(app_commands.Group):
     
     @app_commands.command(name="create", description="Create a new playlist")
@@ -354,7 +351,7 @@ class PlaylistCommands(app_commands.Group):
         key = f"{interaction.user.id}_{playlist}"
         
         if key not in data:
-            return await interaction.response.send_message(f"❌ Playlist **{playlist}** doesn't exist. Create it first!", ephemeral=True)
+            return await interaction.response.send_message(f"❌ Playlist **{playlist}** doesn't exist.", ephemeral=True)
 
         await interaction.response.send_message(f"🔍 Searching: `{song}`...", ephemeral=True)
         
@@ -379,7 +376,7 @@ class PlaylistCommands(app_commands.Group):
             await interaction.edit_original_response(content=f"✅ Added **{info['title']}** to **{playlist}**!")
             
         except Exception as e:
-            await interaction.edit_original_response(content=f"❌ Error finding song: {e}")
+            await interaction.edit_original_response(content=f"❌ Error: {e}")
 
     @app_commands.command(name="play", description="Load and play a playlist")
     async def play_playlist(self, interaction: discord.Interaction, playlist: str):
@@ -400,11 +397,8 @@ class PlaylistCommands(app_commands.Group):
         settings = get_settings(interaction.guild.id)
         settings['text_channel'] = interaction.channel
         
-        # Add all songs to queue
         count = 0
         for track in data[key]:
-            # We clone the track object so modifying it doesn't break the saved file
-            # Update requester to current user
             new_track = track.copy()
             new_track['requester'] = interaction.user.mention
             settings['queue'].append(new_track)
@@ -412,7 +406,6 @@ class PlaylistCommands(app_commands.Group):
             
         await interaction.channel.send(f"✅ Loaded **{count}** songs from **{playlist}**!", delete_after=5)
 
-        # Start playing if not already
         if not interaction.guild.voice_client.is_playing():
             await play_next(interaction.guild, interaction.guild.voice_client)
 
