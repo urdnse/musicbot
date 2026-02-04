@@ -11,7 +11,14 @@ import json
 ffmpeg_executable = "ffmpeg"
 DEVELOPER_NAME = "Deepanshu Yadav" 
 PLAYLIST_FILE = "playlists.json"
-COOKIE_FILE = "cookies.txt"  # <--- NEW: The key to bypass the block
+COOKIE_FILE = "cookies.txt"
+
+# --- DEBUG CHECK ---
+if os.path.exists(COOKIE_FILE):
+    print(f"✅ SUCCESS: Found {COOKIE_FILE}! (Bypassing YouTube Block)")
+else:
+    print(f"⚠️ WARNING: {COOKIE_FILE} NOT FOUND. YouTube will likely BLOCK this bot.")
+    print("👉 Please upload 'cookies.txt' to your GitHub repository.")
 
 # --- GLOBAL STATE ---
 guild_settings = {}
@@ -62,8 +69,10 @@ yt_dl_options = {
     'quiet': True,
     'default_search': 'auto',
     'nocheckcertificate': True,
-    # THIS IS THE FIX: Tell yt-dlp to use the cookies file
-    'cookiefile': COOKIE_FILE if os.path.exists(COOKIE_FILE) else None
+    # 1. Force use of cookies
+    'cookiefile': COOKIE_FILE, 
+    # 2. Fake User Agent (Looks like a real PC)
+    'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36',
 }
 ytdl = yt_dlp.YoutubeDL(yt_dl_options)
 
