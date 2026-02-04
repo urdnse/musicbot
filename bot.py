@@ -22,10 +22,10 @@ yt_dl_options = {
     'noplaylist': 'True',
     'quiet': True,
     'nocheckcertificate': True,
-    # Use web_embedded to bypass Bot/DRM blocks
+    'cookiefile': 'cookies.txt', # Ensure you upload your fresh file!
     'extractor_args': {
         'youtube': {
-            'player_client': ['web_embedded'],
+            'player_client': ['web_embedded'], # Bypasses DRM and sign-in
         }
     }
 }
@@ -69,3 +69,4 @@ async def stop(interaction: discord.Interaction):
         await interaction.response.send_message("❌ Not connected.", ephemeral=True)
 
 bot.run(os.environ["DISCORD_TOKEN"])
+
