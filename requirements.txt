@@ -1,4 +1,3 @@
 discord.py
-yt-dlp>=2024.04.09
+git+https://github.com/yt-dlp/yt-dlp.git@master
 PyNaCl
-imageio-ffmpeg
