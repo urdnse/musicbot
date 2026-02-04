@@ -7,17 +7,10 @@ import datetime
 import os
 import json
 
-# --- DEBUGGING ---
-if os.path.exists("cookies.txt"):
-    print("\n✅ COOKIES DETECTED. Using them.\n")
-else:
-    print("\n⚠️ NO COOKIES. Relying on iOS Spoofing.\n")
-
 # --- CONFIGURATION ---
 ffmpeg_executable = "ffmpeg"
 DEVELOPER_NAME = "Deepanshu Yadav" 
 PLAYLIST_FILE = "playlists.json"
-COOKIE_FILE = "cookies.txt"
 
 # --- GLOBAL STATE ---
 guild_settings = {}
@@ -61,21 +54,20 @@ class MusicBot(commands.Bot):
 
 bot = MusicBot()
 
-# --- AUDIO SETUP (THE IPHONE FIX) ---
+# --- AUDIO SETUP (TV MODE FIX) ---
 yt_dl_options = {
     'format': 'bestaudio/best',
     'noplaylist': 'True',
     'quiet': True,
     'default_search': 'auto',
     'nocheckcertificate': True,
-    'cookiefile': COOKIE_FILE, 
-    'source_address': '0.0.0.0', 
+    'source_address': '0.0.0.0',
+    'cachedir': False, # Disable cache to prevent saving failed attempts
     
-    # --- TRICK YOUTUBE INTO THINKING WE ARE AN IPHONE ---
-    'user_agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 16_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/16.0 Mobile/15E148 Safari/604.1',
+    # --- TRICK YOUTUBE INTO THINKING WE ARE A SMART TV ---
     'extractor_args': {
         'youtube': {
-            'player_client': ['ios']  # <--- CHANGED FROM ANDROID TO IOS
+            'player_client': ['tv']  # <--- THIS IS THE MAGIC KEY
         }
     }
 }
