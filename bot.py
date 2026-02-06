@@ -14,20 +14,29 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 queues = {}
 idle_tasks = {}
 
-# ---------- YTDLP (MOST STABLE CONFIG) ----------
-YTDL_OPTS = {
-    "format": "bestaudio/best[protocol^=http]/best",
+# ---------- YTDLP OPTIONS ----------
+YTDL_BASE = {
     "quiet": True,
     "noplaylist": True,
-    "cookiefile": "cookies.txt",
     "cachedir": False,
+    "socket_timeout": 20,
+}
+
+YTDL_YOUTUBE = {
+    **YTDL_BASE,
+    "format": "bestaudio/best[protocol^=http]/best",
+    "cookiefile": "cookies.txt",
     "extractor_args": {
         "youtube": {
             "player_client": ["android"],
             "skip": ["dash", "hls"]
         }
     },
-    "socket_timeout": 20,
+}
+
+YTDL_SOUNDCLOUD = {
+    **YTDL_BASE,
+    "format": "bestaudio/best",
 }
 
 FFMPEG_OPTS = {
@@ -95,10 +104,25 @@ class MusicPanel(discord.ui.View):
             await vc.disconnect()
             await i.response.send_message("Stopped", delete_after=2)
 
+# ---------- EXTRACT WITH FALLBACK ----------
+def extract_with_fallback(query):
+    # Try YouTube first
+    try:
+        with yt_dlp.YoutubeDL(YTDL_YOUTUBE) as ydl:
+            info = ydl.extract_info(f"ytsearch:{query}", download=False)
+            return info["entries"][0]
+    except Exception:
+        pass
+
+    # Fallback to SoundCloud
+    with yt_dlp.YoutubeDL(YTDL_SOUNDCLOUD) as ydl:
+        info = ydl.extract_info(f"scsearch:{query}", download=False)
+        return info["entries"][0]
+
 # ---------- /play ----------
 @bot.tree.command(name="play", description="Play or queue music")
 async def play(interaction: discord.Interaction, search: str):
-    await interaction.response.send_message("🎧 Fetching audio...", delete_after=1)
+    await interaction.response.send_message("🎧 Searching...", delete_after=1)
 
     if not interaction.user.voice:
         return await interaction.followup.send("❌ Join a VC first")
@@ -111,9 +135,7 @@ async def play(interaction: discord.Interaction, search: str):
         idle_tasks[interaction.guild.id].cancel()
 
     try:
-        with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
-            info = ydl.extract_info(f"ytsearch:{search}", download=False)
-            data = info["entries"][0]
+        data = extract_with_fallback(search)
 
         source = create_source(data["url"])
         queues.setdefault(interaction.guild.id, []).append(source)
@@ -135,13 +157,10 @@ async def play(interaction: discord.Interaction, search: str):
 
         await interaction.followup.send(embed=embed, view=MusicPanel())
 
-    except yt_dlp.utils.DownloadError:
+    except Exception:
         await interaction.followup.send(
-            "❌ This video doesn’t provide a playable audio format.\nTry another song."
+            "❌ Could not play this song from YouTube or SoundCloud.\nTry another song."
         )
-
-    except Exception as e:
-        await interaction.followup.send(f"❌ Error: `{e}`")
 
 # ---------- TOKEN ----------
 TOKEN = os.getenv("DISCORD_TOKEN")
