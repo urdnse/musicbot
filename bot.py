@@ -6,11 +6,14 @@ import asyncio
 
 # ---------- CONFIG ----------
 DEVELOPER_NAME = "Deepanshu Yadav"
-intents = discord.Intents.all()
+IDLE_TIMEOUT = 300  # 5 minutes
 
+intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-# ---------- YTDLP ----------
+idle_tasks = {}
+
+# ---------- YTDLP OPTIONS ----------
 YTDL_OPTS = {
     "format": "bestaudio[ext=m4a]/bestaudio/best",
     "quiet": True,
@@ -20,11 +23,18 @@ YTDL_OPTS = {
         "youtube": {
             "player_client": ["android"]
         }
-    }
+    },
+    "socket_timeout": 15,
 }
 
+# STRONG FFMPEG RECONNECT
 FFMPEG_OPTS = {
-    "before_options": "-reconnect 1 -reconnect_streamed 1 -reconnect_delay_max 5",
+    "before_options": (
+        "-reconnect 1 "
+        "-reconnect_streamed 1 "
+        "-reconnect_delay_max 10 "
+        "-rw_timeout 15000000"
+    ),
     "options": "-vn"
 }
 
@@ -33,6 +43,18 @@ FFMPEG_OPTS = {
 async def on_ready():
     await bot.tree.sync()
     print(f"Logged in as {bot.user}")
+
+# ---------- IDLE DISCONNECT ----------
+async def idle_disconnect(guild: discord.Guild):
+    await asyncio.sleep(IDLE_TIMEOUT)
+    vc = guild.voice_client
+    if vc and not vc.is_playing():
+        await vc.disconnect()
+
+def schedule_idle(guild):
+    if guild.id in idle_tasks:
+        idle_tasks[guild.id].cancel()
+    idle_tasks[guild.id] = bot.loop.create_task(idle_disconnect(guild))
 
 # ---------- CONTROL PANEL ----------
 class MusicPanel(discord.ui.View):
@@ -64,56 +86,66 @@ class MusicPanel(discord.ui.View):
     async def stop(self, i: discord.Interaction, b: discord.ui.Button):
         vc = i.guild.voice_client
         if vc:
+            if i.guild.id in idle_tasks:
+                idle_tasks[i.guild.id].cancel()
             await vc.disconnect()
             await i.response.send_message("Stopped", delete_after=2)
+
+# ---------- SAFE AUDIO SOURCE ----------
+def create_source(stream_url):
+    audio = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTS)
+    return discord.PCMVolumeTransformer(audio, volume=1.0)
 
 # ---------- /play ----------
 @bot.tree.command(name="play", description="Play music")
 async def play(interaction: discord.Interaction, search: str):
-    await interaction.response.defer()
+    # Respond instantly to avoid "thinking" freeze
+    await interaction.response.send_message("🎧 Loading...", delete_after=1)
 
     if not interaction.user.voice:
-        return await interaction.followup.send("❌ Join a voice channel first")
+        return await interaction.followup.send("❌ Join a VC first")
 
     vc = interaction.guild.voice_client
     if not vc:
         vc = await interaction.user.voice.channel.connect()
 
-    with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
-        info = ydl.extract_info(f"ytsearch:{search}", download=False)["entries"][0]
+    # Cancel idle timer
+    if interaction.guild.id in idle_tasks:
+        idle_tasks[interaction.guild.id].cancel()
 
-    url = info["url"]
-    title = info["title"]
-    duration = info.get("duration", 0)
-    thumbnail = info.get("thumbnail")
+    try:
+        with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
+            data = ydl.extract_info(f"ytsearch:{search}", download=False)["entries"][0]
 
-    source = discord.FFmpegPCMAudio(url, **FFMPEG_OPTS)
-    vc.play(source)
+        stream_url = data["url"]
+        title = data["title"]
+        duration = data.get("duration", 0)
+        thumbnail = data.get("thumbnail")
 
-    # Fake progress bar
-    progress_bar = "🔘───────────────"
-    total_time = f"0:{duration//60:02d}:{duration%60:02d}"
+        source = create_source(stream_url)
 
-    embed = discord.Embed(
-        title="🎧 NOW PLAYING",
-        description=f"**{title}**\n\n`0:00` {progress_bar} `{total_time}`",
-        color=0x2B2D31
-    )
+        vc.play(
+            source,
+            after=lambda e: schedule_idle(interaction.guild)
+        )
 
-    embed.set_thumbnail(url=thumbnail)
-    embed.add_field(
-        name="Requested by",
-        value=interaction.user.mention,
-        inline=True
-    )
-    embed.add_field(
-        name="Voice Channel",
-        value=interaction.user.voice.channel.mention,
-        inline=True
-    )
-    embed.set_footer(text=f"Dev: {DEVELOPER_NAME}")
+        bar = "🔘───────────────"
+        total = f"{duration//60}:{duration%60:02d}"
 
-    await interaction.followup.send(embed=embed, view=MusicPanel())
+        embed = discord.Embed(
+            title="🎧 NOW PLAYING",
+            description=f"**{title}**\n\n`0:00` {bar} `{total}`",
+            color=0x2B2D31
+        )
+        embed.set_thumbnail(url=thumbnail)
+        embed.add_field(name="Requested by", value=interaction.user.mention)
+        embed.add_field(name="Voice Channel", value=interaction.user.voice.channel.mention)
+        embed.set_footer(text=f"Dev: {DEVELOPER_NAME}")
+
+        await interaction.followup.send(embed=embed, view=MusicPanel())
+
+    except Exception as e:
+        await interaction.followup.send(f"❌ Failed to play: `{e}`")
 
 # ---------- TOKEN ----------
 TOKEN = os.getenv("DISCORD_TOKEN")
