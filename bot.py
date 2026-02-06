@@ -52,7 +52,10 @@ async def play(interaction: discord.Interaction, search: str):
     await interaction.response.send_message(f"🔍 Searching: `{search}`...", delete_after=2.0)
     
     if not interaction.guild.voice_client:
-        await interaction.user.voice.channel.connect()
+        if interaction.user.voice:
+            await interaction.user.voice.channel.connect()
+        else:
+            return await interaction.followup.send("❌ Join a VC first!")
 
     try:
         with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
