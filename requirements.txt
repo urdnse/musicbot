@@ -1,3 +1,3 @@
 discord.py
-git+https://github.com/yt-dlp/yt-dlp.git@master
 PyNaCl
+git+https://github.com/yt-dlp/yt-dlp.git@master
