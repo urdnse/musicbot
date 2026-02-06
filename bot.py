@@ -11,23 +11,23 @@ IDLE_TIMEOUT = 300  # 5 minutes
 intents = discord.Intents.all()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-idle_tasks = {}
+queues = {}        # guild_id -> list of sources
+idle_tasks = {}   # guild_id -> idle task
 
-# ---------- YTDLP OPTIONS ----------
+# ---------- YTDLP ----------
 YTDL_OPTS = {
     "format": "bestaudio[ext=m4a]/bestaudio/best",
     "quiet": True,
     "noplaylist": True,
     "cookiefile": "cookies.txt",
+    "socket_timeout": 15,
     "extractor_args": {
         "youtube": {
             "player_client": ["android"]
         }
-    },
-    "socket_timeout": 15,
+    }
 }
 
-# STRONG FFMPEG RECONNECT
 FFMPEG_OPTS = {
     "before_options": (
         "-reconnect 1 "
@@ -45,7 +45,7 @@ async def on_ready():
     print(f"Logged in as {bot.user}")
 
 # ---------- IDLE DISCONNECT ----------
-async def idle_disconnect(guild: discord.Guild):
+async def idle_disconnect(guild):
     await asyncio.sleep(IDLE_TIMEOUT)
     vc = guild.voice_client
     if vc and not vc.is_playing():
@@ -56,10 +56,34 @@ def schedule_idle(guild):
         idle_tasks[guild.id].cancel()
     idle_tasks[guild.id] = bot.loop.create_task(idle_disconnect(guild))
 
+# ---------- AUDIO SOURCE ----------
+def create_source(url):
+    audio = discord.FFmpegPCMAudio(url, **FFMPEG_OPTS)
+    return discord.PCMVolumeTransformer(audio, volume=1.0)
+
+# ---------- PLAY NEXT ----------
+def play_next(guild):
+    vc = guild.voice_client
+    if not vc:
+        return
+
+    if queues.get(guild.id):
+        source = queues[guild.id].pop(0)
+        vc.play(source, after=lambda e: play_next(guild))
+    else:
+        schedule_idle(guild)
+
 # ---------- CONTROL PANEL ----------
 class MusicPanel(discord.ui.View):
     def __init__(self):
         super().__init__(timeout=None)
+
+    @discord.ui.button(emoji="⏭️", style=discord.ButtonStyle.secondary)
+    async def skip(self, i: discord.Interaction, b: discord.ui.Button):
+        vc = i.guild.voice_client
+        if vc and vc.is_playing():
+            vc.stop()
+            await i.response.send_message("⏭️ Skipped", delete_after=2)
 
     @discord.ui.button(emoji="⏸️", style=discord.ButtonStyle.primary)
     async def pause(self, i: discord.Interaction, b: discord.ui.Button):
@@ -75,32 +99,18 @@ class MusicPanel(discord.ui.View):
             vc.resume()
             await i.response.send_message("Resumed", delete_after=2)
 
-    @discord.ui.button(emoji="⏭️", style=discord.ButtonStyle.secondary)
-    async def skip(self, i: discord.Interaction, b: discord.ui.Button):
-        vc = i.guild.voice_client
-        if vc:
-            vc.stop()
-            await i.response.send_message("Skipped", delete_after=2)
-
     @discord.ui.button(emoji="⏹️", style=discord.ButtonStyle.danger)
     async def stop(self, i: discord.Interaction, b: discord.ui.Button):
         vc = i.guild.voice_client
         if vc:
-            if i.guild.id in idle_tasks:
-                idle_tasks[i.guild.id].cancel()
+            queues[i.guild.id] = []
             await vc.disconnect()
             await i.response.send_message("Stopped", delete_after=2)
 
-# ---------- SAFE AUDIO SOURCE ----------
-def create_source(stream_url):
-    audio = discord.FFmpegPCMAudio(stream_url, **FFMPEG_OPTS)
-    return discord.PCMVolumeTransformer(audio, volume=1.0)
-
 # ---------- /play ----------
-@bot.tree.command(name="play", description="Play music")
+@bot.tree.command(name="play", description="Play or queue music")
 async def play(interaction: discord.Interaction, search: str):
-    # Respond instantly to avoid "thinking" freeze
-    await interaction.response.send_message("🎧 Loading...", delete_after=1)
+    await interaction.response.send_message("🎧 Processing...", delete_after=1)
 
     if not interaction.user.voice:
         return await interaction.followup.send("❌ Join a VC first")
@@ -109,7 +119,7 @@ async def play(interaction: discord.Interaction, search: str):
     if not vc:
         vc = await interaction.user.voice.channel.connect()
 
-    # Cancel idle timer
+    # cancel idle timer
     if interaction.guild.id in idle_tasks:
         idle_tasks[interaction.guild.id].cancel()
 
@@ -117,29 +127,26 @@ async def play(interaction: discord.Interaction, search: str):
         with yt_dlp.YoutubeDL(YTDL_OPTS) as ydl:
             data = ydl.extract_info(f"ytsearch:{search}", download=False)["entries"][0]
 
-        stream_url = data["url"]
-        title = data["title"]
+        source = create_source(data["url"])
+        queues.setdefault(interaction.guild.id, []).append(source)
+
+        # if nothing playing, start immediately
+        if not vc.is_playing():
+            play_next(interaction.guild)
+            status = "🎧 Now Playing"
+        else:
+            status = "➕ Added to Queue"
+
         duration = data.get("duration", 0)
-        thumbnail = data.get("thumbnail")
-
-        source = create_source(stream_url)
-
-        vc.play(
-            source,
-            after=lambda e: schedule_idle(interaction.guild)
-        )
-
-        bar = "🔘───────────────"
-        total = f"{duration//60}:{duration%60:02d}"
-
         embed = discord.Embed(
-            title="🎧 NOW PLAYING",
-            description=f"**{title}**\n\n`0:00` {bar} `{total}`",
+            title=status,
+            description=f"**{data['title']}**",
             color=0x2B2D31
         )
-        embed.set_thumbnail(url=thumbnail)
+
+        embed.set_thumbnail(url=data.get("thumbnail"))
         embed.add_field(name="Requested by", value=interaction.user.mention)
-        embed.add_field(name="Voice Channel", value=interaction.user.voice.channel.mention)
+        embed.add_field(name="Position in Queue", value=str(len(queues[interaction.guild.id])))
         embed.set_footer(text=f"Dev: {DEVELOPER_NAME}")
 
         await interaction.followup.send(embed=embed, view=MusicPanel())
