@@ -1,12 +1,12 @@
-# 1. Use an official Python base image
+# 1. Start with a Python base image (Essential Fix)
 FROM python:3.11-slim
 
-# 2. Install FFmpeg and system tools
-RUN apt-get update && apt-get install -y ffmpeg git curl unzip && rm -rf /var/lib/apt/lists/*
+# 2. Install FFmpeg, system tools, and Deno (Mandatory for 2026 YouTube)
+RUN apt-get update && apt-get install -y ffmpeg git curl unzip && \
+    curl -fsSL https://deno.land/install.sh | sh && \
+    rm -rf /var/lib/apt/lists/*
 
-# 3. REQUIRED FOR 2026: Install Deno (JavaScript runtime)
-# YouTube now requires a JS engine to solve challenges
-RUN curl -fsSL https://deno.land/install.sh | sh
+# 3. Set Deno path environment variables
 ENV DENO_INSTALL="/root/.deno"
 ENV PATH="$DENO_INSTALL/bin:$PATH"
 
